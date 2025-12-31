@@ -57,26 +57,36 @@ pub(crate) fn interned_string(
     })
 }
 
-/// work around restrictions on length and allowed characters imposed by macos linker
-/// returns (note the comma character for macos):
-///   under macos: ".defmt," + prefix
-///   otherwise:   ".defmt." + prefix + symbol
-pub(crate) fn linker_section(for_macos: bool, prefix: Option<&str>, symbol: &str) -> String {
-    let mut sub_section = if let Some(prefix) = prefix {
-        format!(".{prefix}.{symbol}")
-    } else {
-        format!(".{symbol}")
+/// Generate linker section name for defmt symbols.
+///
+/// UNIFIED APPROACH: Both platforms now consolidate by severity level instead of
+/// creating unique sections per log. This:
+/// - Avoids macOS's 255 section-per-segment limit
+/// - Eliminates the need for a linker script on Linux
+/// - The symbol's export_name is still unique, so address-based lookup works
+///
+/// Returns:
+///   macOS: ".defmt,{severity}" (e.g., ".defmt,info")
+///   Linux: ".defmt.{severity}" (e.g., ".defmt.info")
+pub(crate) fn linker_section(for_macos: bool, prefix: Option<&str>, _symbol: &str) -> String {
+    // Consolidate by severity level on BOTH platforms
+    // The _symbol parameter is kept for API compatibility but no longer used
+    let sub_section = match prefix {
+        Some(p) => {
+            if for_macos {
+                format!(",{p}") // macOS uses comma: .defmt,info
+            } else {
+                format!(".{p}") // Linux uses dot: .defmt.info
+            }
+        }
+        None => {
+            if for_macos {
+                ",data".to_string() // macOS: .defmt,data
+            } else {
+                ".data".to_string() // Linux: .defmt.data
+            }
+        }
     };
-
-    if for_macos {
-        // Use a single section per severity level instead of unique section per log.
-        // This avoids hitting macOS's 255 section-per-segment limit.
-        // The symbol's export_name is still unique, so address-based lookup works.
-        sub_section = match prefix {
-            Some(p) => format!(",{p}"),
-            None => ",data".to_string(),
-        };
-    }
 
     format!(".defmt{sub_section}")
 }

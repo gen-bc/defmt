@@ -19,6 +19,93 @@ use serde::{Deserialize, Serialize};
 
 use crate::{BitflagsKey, StringEntry, Table, TableEntry, Tag, DEFMT_VERSIONS};
 
+#[cfg(not(target_os = "macos"))]
+pub fn get_version_and_relevant_sections<'a>(
+    elf: &'a object::File<'a>,
+    version: Option<String>,
+) -> Result<
+    (
+        String,
+        HashMap<object::SectionIndex, object::Section<'a, 'a>>,
+    ),
+    anyhow::Error,
+> {
+    let mut sections = HashMap::new();
+
+    // UNIFIED APPROACH: Find all sections starting with ".defmt"
+    // This supports both:
+    // - Old binaries with linker script (single merged ".defmt" section)
+    // - New binaries without linker script (multiple ".defmt.{severity}" sections)
+    for section in elf.sections() {
+        if let Ok(name) = section.name() {
+            if name == ".defmt" || name.starts_with(".defmt.") {
+                sections.insert(section.index(), section);
+            }
+        }
+    }
+
+    let found_defmt = !sections.is_empty();
+
+    match (found_defmt, version) {
+        (false, None) => bail!("defmt is not used"),
+        (true, Some(version)) => Ok((version, sections)),
+        (false, Some(_)) => {
+            bail!(
+                "defmt version found, but no `.defmt` sections - check your linker configuration"
+            );
+        }
+        (true, None) => {
+            bail!(
+                "`.defmt` sections found, but no version symbol - check your linker configuration"
+            );
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub fn get_version_and_relevant_sections<'a>(
+    elf: &'a object::File<'a>,
+    version: Option<String>,
+) -> Result<
+    (
+        String,
+        HashMap<object::SectionIndex, object::Section<'a, 'a>>,
+    ),
+    anyhow::Error,
+> {
+    use object::ObjectSegment;
+    // store all relevant sections in a map
+    let mut sections = HashMap::new();
+    let defmt_segment = elf.segments().find(|segment| {
+        object::ObjectSegment::name(segment).is_ok_and(|name| name == Some(".defmt"))
+    });
+
+    let (defmt_segment, version) = match (defmt_segment, version) {
+        (None, None) => return Err(anyhow!("defmt is not used")),
+        (Some(defmt_segment), Some(version)) => (defmt_segment, version),
+        (None, Some(_)) => {
+            bail!("defmt version found, but no `.defmt` section - check your linker configuration");
+        }
+        (Some(_), None) => {
+            bail!(
+                "`.defmt` section found, but no version symbol - check your linker configuration"
+            );
+        }
+    };
+
+    for section in elf.sections() {
+        // check if the section is in the segment without calling sections(), which is not a method on Segment
+        // instead, iterate over elf.sections() and check if the section is in the segment by comparing the section's address
+        if section.address() >= defmt_segment.address()
+            && section.address() < defmt_segment.address() + defmt_segment.size()
+        {
+            sections.insert(section.index(), section);
+        }
+    }
+
+    Ok((version, sections))
+}
+
 pub fn parse_impl(elf: &[u8], check_version: bool) -> Result<Option<Table>, anyhow::Error> {
     let elf = object::File::parse(elf)?;
     let is_mac = elf.format() == object::BinaryFormat::MachO;
