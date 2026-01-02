@@ -80,11 +80,32 @@ impl Tag {
 pub struct TableEntry {
     string: StringEntry,
     raw_symbol: String,
+    package_index: u16,
+    crate_index: Option<u16>,
 }
 
 impl TableEntry {
     pub fn new(string: StringEntry, raw_symbol: String) -> Self {
-        Self { string, raw_symbol }
+        Self { 
+            string, 
+            raw_symbol,
+            package_index: 0,
+            crate_index: None,
+        }
+    }
+
+    pub(crate) fn new_with_indices(
+        string: StringEntry, 
+        raw_symbol: String,
+        package_index: u16,
+        crate_index: Option<u16>,
+    ) -> Self {
+        Self { 
+            string, 
+            raw_symbol,
+            package_index,
+            crate_index,
+        }
     }
 
     #[cfg(test)]
@@ -92,6 +113,8 @@ impl TableEntry {
         Self {
             string: StringEntry::new(tag, string),
             raw_symbol: "<unknown>".to_string(),
+            package_index: 0,
+            crate_index: None,
         }
     }
 }
@@ -158,6 +181,8 @@ pub struct Table {
     entries: BTreeMap<usize, TableEntry>,
     bitflags: HashMap<BitflagsKey, Vec<(String, u128)>>,
     encoding: Encoding,
+    packages: HashMap<u16, String>,
+    crates: HashMap<u16, String>,
 }
 
 impl Table {
@@ -242,11 +267,20 @@ impl Table {
             timestamp_args = decoder.decode_format(format)?;
         }
 
+        let entry = self.entries.get(&(index as usize))
+            .ok_or(DecodeError::Malformed)?;
+        
         let (level, format) = self
             .get_with_level(index as usize)
             .map_err(|_| DecodeError::Malformed)?;
 
         let args = decoder.decode_format(format)?;
+
+        // Look up package and crate names from indices
+        let package = self.packages.get(&entry.package_index)
+            .map(|s| s.as_str())
+            .unwrap_or("");
+        let crate_name = entry.crate_index.and_then(|idx| self.crates.get(&idx).map(|s| s.as_str()));
 
         let frame = Frame::new(
             self,
@@ -256,6 +290,8 @@ impl Table {
             timestamp_args,
             format,
             args,
+            package,
+            crate_name,
         );
 
         let consumed = len - decoder.bytes.len();
@@ -361,6 +397,8 @@ mod tests {
             entries: entries.into_iter().enumerate().collect(),
             bitflags: Default::default(),
             encoding: Encoding::Raw,
+            packages: Default::default(),
+            crates: Default::default(),
         }
     }
 
@@ -376,6 +414,8 @@ mod tests {
             entries: entries.into_iter().enumerate().collect(),
             bitflags: Default::default(),
             encoding: Encoding::Raw,
+            packages: Default::default(),
+            crates: Default::default(),
         }
     }
 
@@ -399,6 +439,8 @@ mod tests {
             )),
             bitflags: Default::default(),
             encoding: Encoding::Raw,
+            packages: Default::default(),
+            crates: Default::default(),
         };
 
         let frame = table.decode(bytes).unwrap().0;
@@ -428,6 +470,8 @@ mod tests {
                     vec![],
                     "Hello, world!",
                     vec![],
+                    "",
+                    None,
                 ),
                 bytes.len(),
             ))
@@ -449,6 +493,8 @@ mod tests {
                     vec![],
                     "The answer is {=u8}!",
                     vec![Arg::Uxx(42)],
+                    "",
+                    None,
                 ),
                 bytes.len(),
             ))
@@ -504,6 +550,8 @@ mod tests {
                         Arg::Ixx(-1),              // i64
                         Arg::Ixx(-1),              // i128
                     ],
+                    "",
+                    None,
                 ),
                 bytes.len(),
             ))
@@ -537,6 +585,8 @@ mod tests {
                     vec![],
                     "The answer is {0=u8} {0=u8}!",
                     vec![Arg::Uxx(42)],
+                    "",
+                    None,
                 ),
                 bytes.len(),
             ))
@@ -559,6 +609,8 @@ mod tests {
                     vec![],
                     "The answer is {1=u16} {0=u8} {1=u16}!",
                     vec![Arg::Uxx(42), Arg::Uxx(0xffff)],
+                    "",
+                    None,
                 ),
                 bytes.len(),
             ))
@@ -594,6 +646,8 @@ mod tests {
                         format: "Foo {{ x: {=u8} }}",
                         args: vec![Arg::Uxx(42)]
                     }],
+                    "",
+                    None,
                 ),
                 bytes.len(),
             ))
@@ -647,6 +701,8 @@ mod tests {
                             }
                         ]
                     }],
+                    "",
+                    None,
                 ),
                 bytes.len(),
             ))
@@ -1099,6 +1155,8 @@ mod tests {
             )),
             bitflags: Default::default(),
             encoding: Encoding::Raw,
+            packages: Default::default(),
+            crates: Default::default(),
         };
 
         let bytes = [

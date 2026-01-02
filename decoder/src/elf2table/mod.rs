@@ -18,6 +18,11 @@ use object::{Object, ObjectSection, ObjectSymbol};
 
 use crate::{BitflagsKey, StringEntry, Table, TableEntry, Tag, DEFMT_VERSIONS};
 
+/// Normalizes a string for comparison by converting to lowercase and replacing '-' with '_'
+fn normalize_for_comparison(s: &str) -> String {
+    s.to_lowercase().replace('-', "_")
+}
+
 #[cfg(not(target_os = "macos"))]
 pub fn get_version_and_relevant_sections<'a>(
     elf: &'a object::File<'a>,
@@ -174,6 +179,10 @@ pub fn parse_impl(elf: &[u8], check_version: bool) -> Result<Option<Table>, anyh
     let mut map = BTreeMap::new();
     let mut bitflags_map = HashMap::new();
     let mut timestamp = None;
+    let mut packages = HashMap::new();
+    let mut crates = HashMap::new();
+    let mut next_package_index = 0u16;
+    let mut next_crate_index = 0u16;
     for entry in elf.symbols() {
         let Ok(name) = entry.name() else {
             continue;
@@ -204,15 +213,47 @@ pub fn parse_impl(elf: &[u8], check_version: bool) -> Result<Option<Table>, anyh
             }
 
             let sym = symbol::Symbol::demangle(name)?;
+            
+            // Get or assign package index
+            let package_index = packages.entry(sym.package().to_string())
+                .or_insert_with(|| {
+                    let idx = next_package_index;
+                    next_package_index += 1;
+                    idx
+                })
+                .clone();
+            
+            // Get or assign crate index, but skip if crate_name equals package (normalized)
+            let crate_index = sym.crate_name().and_then(|crate_name| {
+                // If crate_name equals package (case-insensitive, ignoring '-' vs '_'), 
+                // store None to imply it's the same as the package
+                let normalized_package = normalize_for_comparison(sym.package());
+                let normalized_crate = normalize_for_comparison(crate_name);
+                
+                if normalized_package == normalized_crate {
+                    None
+                } else {
+                    Some(crates.entry(crate_name.to_string())
+                        .or_insert_with(|| {
+                            let idx = next_crate_index;
+                            next_crate_index += 1;
+                            idx
+                        })
+                        .clone())
+                }
+            });
+            
             match sym.tag() {
                 symbol::SymbolTag::Defmt(Tag::Timestamp) => {
                     if timestamp.is_some() {
                         bail!("multiple timestamp format specifications found");
                     }
 
-                    timestamp = Some(TableEntry::new(
+                    timestamp = Some(TableEntry::new_with_indices(
                         StringEntry::new(Tag::Timestamp, sym.data().to_string()),
                         name.to_string(),
+                        package_index,
+                        crate_index,
                     ));
                 }
                 symbol::SymbolTag::Defmt(Tag::BitflagsValue) => {
@@ -253,9 +294,11 @@ pub fn parse_impl(elf: &[u8], check_version: bool) -> Result<Option<Table>, anyh
                 symbol::SymbolTag::Defmt(tag) => {
                     map.insert(
                         (entry.address() as u16) as usize,
-                        TableEntry::new(
+                        TableEntry::new_with_indices(
                             StringEntry::new(tag, sym.data().to_string()),
                             name.to_string(),
+                            package_index,
+                            crate_index,
                         ),
                     );
                 }
@@ -280,11 +323,17 @@ pub fn parse_impl(elf: &[u8], check_version: bool) -> Result<Option<Table>, anyh
         })
         .collect();
 
+    // Flip the hash tables to map from index to string
+    let packages: HashMap<u16, String> = packages.into_iter().map(|(k, v)| (v, k)).collect();
+    let crates: HashMap<u16, String> = crates.into_iter().map(|(k, v)| (v, k)).collect();
+
     Ok(Some(Table {
         entries: map,
         timestamp,
         bitflags,
         encoding,
+        packages,
+        crates,
     }))
 }
 

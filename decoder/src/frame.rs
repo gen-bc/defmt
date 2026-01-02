@@ -49,6 +49,8 @@ pub struct Frame<'t> {
     // Format string
     format: &'t str,
     args: Vec<Arg<'t>>,
+    package: &'t str,
+    crate_name: Option<&'t str>,
 }
 
 impl<'t> Frame<'t> {
@@ -60,6 +62,8 @@ impl<'t> Frame<'t> {
         timestamp_args: Vec<Arg<'t>>,
         format: &'t str,
         args: Vec<Arg<'t>>,
+        package: &'t str,
+        crate_name: Option<&'t str>,
     ) -> Self {
         Self {
             table,
@@ -69,6 +73,8 @@ impl<'t> Frame<'t> {
             timestamp_args,
             format,
             args,
+            package,
+            crate_name,
         }
     }
 
@@ -97,6 +103,14 @@ impl<'t> Frame<'t> {
 
     pub fn index(&self) -> u64 {
         self.index
+    }
+
+    pub fn package(&self) -> &'t str {
+        self.package
+    }
+
+    pub fn crate_name(&self) -> Option<&'t str> {
+        self.crate_name
     }
 
     fn format_args(&self, format: &str, args: &[Arg], parent_hint: Option<&DisplayHint>) -> String {
