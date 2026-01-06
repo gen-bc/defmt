@@ -1181,4 +1181,275 @@ mod tests {
         let frame = table.decode(&bytes).unwrap().0;
         assert_eq!(frame.display(false).to_string(), "0.000001 INFO x=None");
     }
+
+    #[test]
+    fn package_and_crate_name_lookup() {
+
+        let mut entries = BTreeMap::new();
+        // Create an entry with package_index=0 and crate_index=Some(0)
+        entries.insert(
+            0,
+            TableEntry::new_with_indices(
+                StringEntry::new(Tag::Info, "Hello from my_package::my_crate".to_string()),
+                "test_symbol".to_string(),
+                0,      // package_index
+                Some(0), // crate_index
+            ),
+        );
+
+        let mut packages = HashMap::new();
+        packages.insert(0, "my_package".to_string());
+        let mut crates = HashMap::new();
+        crates.insert(0, "my_crate".to_string());
+
+        let table = Table {
+            entries,
+            timestamp: None,
+            bitflags: Default::default(),
+            encoding: Encoding::Raw,
+            packages,
+            crates,
+        };
+
+        let bytes = [0, 0]; // index 0
+        let frame = table.decode(&bytes).unwrap().0;
+
+        assert_eq!(frame.package(), "my_package");
+        assert_eq!(frame.crate_name(), Some("my_crate"));
+    }
+
+    #[test]
+    fn package_without_crate() {
+        let mut entries = BTreeMap::new();
+        // Create an entry with package_index=0 and crate_index=None
+        entries.insert(
+            0,
+            TableEntry::new_with_indices(
+                StringEntry::new(Tag::Info, "Hello from my_package".to_string()),
+                "test_symbol".to_string(),
+                0,   // package_index
+                None, // crate_index (crate name equals package)
+            ),
+        );
+
+        let mut packages = HashMap::new();
+        packages.insert(0, "my_package".to_string());
+
+        let table = Table {
+            entries,
+            timestamp: None,
+            bitflags: Default::default(),
+            encoding: Encoding::Raw,
+            packages,
+            crates: Default::default(),
+        };
+
+        let bytes = [0, 0]; // index 0
+        let frame = table.decode(&bytes).unwrap().0;
+
+        assert_eq!(frame.package(), "my_package");
+        assert_eq!(frame.crate_name(), None);
+    }
+
+    #[test]
+    fn multiple_entries_same_package() {
+        let mut entries = BTreeMap::new();
+        // Both entries use the same package_index (0)
+        entries.insert(
+            0,
+            TableEntry::new_with_indices(
+                StringEntry::new(Tag::Info, "First message".to_string()),
+                "symbol1".to_string(),
+                0,   // package_index
+                None,
+            ),
+        );
+        entries.insert(
+            1,
+            TableEntry::new_with_indices(
+                StringEntry::new(Tag::Debug, "Second message".to_string()),
+                "symbol2".to_string(),
+                0,   // same package_index
+                None,
+            ),
+        );
+
+        let mut packages = HashMap::new();
+        packages.insert(0, "shared_package".to_string());
+
+        let table = Table {
+            entries,
+            timestamp: None,
+            bitflags: Default::default(),
+            encoding: Encoding::Raw,
+            packages,
+            crates: Default::default(),
+        };
+
+        let bytes1 = [0, 0];
+        let frame1 = table.decode(&bytes1).unwrap().0;
+        assert_eq!(frame1.package(), "shared_package");
+        assert_eq!(frame1.crate_name(), None);
+
+        let bytes2 = [1, 0];
+        let frame2 = table.decode(&bytes2).unwrap().0;
+        assert_eq!(frame2.package(), "shared_package");
+        assert_eq!(frame2.crate_name(), None);
+    }
+
+    #[test]
+    fn multiple_packages_and_crates() {
+        let mut entries = BTreeMap::new();
+        entries.insert(
+            0,
+            TableEntry::new_with_indices(
+                StringEntry::new(Tag::Info, "From package1::crate1".to_string()),
+                "symbol1".to_string(),
+                0,      // package_index
+                Some(0), // crate_index
+            ),
+        );
+        entries.insert(
+            1,
+            TableEntry::new_with_indices(
+                StringEntry::new(Tag::Debug, "From package2::crate2".to_string()),
+                "symbol2".to_string(),
+                1,      // different package_index
+                Some(1), // different crate_index
+            ),
+        );
+
+        let mut packages = HashMap::new();
+        packages.insert(0, "package1".to_string());
+        packages.insert(1, "package2".to_string());
+        let mut crates = HashMap::new();
+        crates.insert(0, "crate1".to_string());
+        crates.insert(1, "crate2".to_string());
+
+        let table = Table {
+            entries,
+            timestamp: None,
+            bitflags: Default::default(),
+            encoding: Encoding::Raw,
+            packages,
+            crates,
+        };
+
+        let bytes1 = [0, 0];
+        let frame1 = table.decode(&bytes1).unwrap().0;
+        assert_eq!(frame1.package(), "package1");
+        assert_eq!(frame1.crate_name(), Some("crate1"));
+
+        let bytes2 = [1, 0];
+        let frame2 = table.decode(&bytes2).unwrap().0;
+        assert_eq!(frame2.package(), "package2");
+        assert_eq!(frame2.crate_name(), Some("crate2"));
+    }
+
+    #[test]
+    fn missing_package_index_returns_empty_string() {
+        let mut entries = BTreeMap::new();
+        // Entry with package_index that doesn't exist in packages map
+        entries.insert(
+            0,
+            TableEntry::new_with_indices(
+                StringEntry::new(Tag::Info, "Missing package".to_string()),
+                "test_symbol".to_string(),
+                99,  // package_index that doesn't exist
+                None,
+            ),
+        );
+
+        let table = Table {
+            entries,
+            timestamp: None,
+            bitflags: Default::default(),
+            encoding: Encoding::Raw,
+            packages: Default::default(), // empty packages map
+            crates: Default::default(),
+        };
+
+        let bytes = [0, 0];
+        let frame = table.decode(&bytes).unwrap().0;
+
+        assert_eq!(frame.package(), "");
+        assert_eq!(frame.crate_name(), None);
+    }
+
+    #[test]
+    fn missing_crate_index_returns_none() {
+        let mut entries = BTreeMap::new();
+        // Entry with crate_index that doesn't exist in crates map
+        entries.insert(
+            0,
+            TableEntry::new_with_indices(
+                StringEntry::new(Tag::Info, "Missing crate".to_string()),
+                "test_symbol".to_string(),
+                0,      // valid package_index
+                Some(99), // crate_index that doesn't exist
+            ),
+        );
+
+        let mut packages = HashMap::new();
+        packages.insert(0, "my_package".to_string());
+
+        let table = Table {
+            entries,
+            timestamp: None,
+            bitflags: Default::default(),
+            encoding: Encoding::Raw,
+            packages,
+            crates: Default::default(), // empty crates map
+        };
+
+        let bytes = [0, 0];
+        let frame = table.decode(&bytes).unwrap().0;
+
+        assert_eq!(frame.package(), "my_package");
+        assert_eq!(frame.crate_name(), None);
+    }
+
+    #[test]
+    fn package_and_crate_with_timestamp() {
+        let mut entries = BTreeMap::new();
+        entries.insert(
+            0,
+            TableEntry::new_with_indices(
+                StringEntry::new(Tag::Info, "Message with timestamp".to_string()),
+                "test_symbol".to_string(),
+                0,      // package_index
+                Some(0), // crate_index
+            ),
+        );
+
+        let mut packages = HashMap::new();
+        packages.insert(0, "my_package".to_string());
+        let mut crates = HashMap::new();
+        crates.insert(0, "my_crate".to_string());
+
+        let table = Table {
+            entries,
+            timestamp: Some(TableEntry::new_with_indices(
+                StringEntry::new(Tag::Timestamp, "{=u8:us}".to_string()),
+                "timestamp_symbol".to_string(),
+                0,   // timestamp also has package_index
+                None,
+            )),
+            bitflags: Default::default(),
+            encoding: Encoding::Raw,
+            packages,
+            crates,
+        };
+
+        let bytes = [
+            0, 0, // index
+            42,  // timestamp value
+        ];
+        let frame = table.decode(&bytes).unwrap().0;
+
+        assert_eq!(frame.package(), "my_package");
+        assert_eq!(frame.crate_name(), Some("my_crate"));
+        // Verify the frame still decodes correctly with timestamp
+        assert!(frame.display_timestamp().is_some());
+    }
 }
