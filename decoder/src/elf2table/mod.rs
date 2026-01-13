@@ -19,49 +19,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::{BitflagsKey, StringEntry, Table, TableEntry, Tag, DEFMT_VERSIONS};
 
-#[cfg(not(target_os = "macos"))]
-pub fn get_version_and_relevant_sections<'a>(
-    elf: &'a object::File<'a>,
-    version: Option<String>,
-) -> Result<
-    (
-        String,
-        HashMap<object::SectionIndex, object::Section<'a, 'a>>,
-    ),
-    anyhow::Error,
-> {
-    let mut sections = HashMap::new();
-
-    // UNIFIED APPROACH: Find all sections starting with ".defmt"
-    // This supports both:
-    // - Old binaries with linker script (single merged ".defmt" section)
-    // - New binaries without linker script (multiple ".defmt.{severity}" sections)
-    for section in elf.sections() {
-        if let Ok(name) = section.name() {
-            if name == ".defmt" || name.starts_with(".defmt.") {
-                sections.insert(section.index(), section);
-            }
-        }
-    }
-
-    let found_defmt = !sections.is_empty();
-
-    match (found_defmt, version) {
-        (false, None) => bail!("defmt is not used"),
-        (true, Some(version)) => Ok((version, sections)),
-        (false, Some(_)) => {
-            bail!(
-                "defmt version found, but no `.defmt` sections - check your linker configuration"
-            );
-        }
-        (true, None) => {
-            bail!(
-                "`.defmt` sections found, but no version symbol - check your linker configuration"
-            );
-        }
-    }
-}
-
 #[cfg(target_os = "macos")]
 pub fn get_version_and_relevant_sections<'a>(
     elf: &'a object::File<'a>,
