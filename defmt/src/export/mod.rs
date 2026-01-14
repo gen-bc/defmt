@@ -189,11 +189,10 @@ pub fn make_istr(address: u16) -> Str {
 
 /// Computes the base-relative `u16` ID used on the wire for a given defmt symbol.
 ///
-/// This mirrors how `defmt` derives IDs from symbol addresses (truncate to `u16` then rebase).
+/// This mirrors how `defmt` derives IDs from symbol addresses (truncate to u16, then subtract base).
 #[cfg(feature = "linkme-registry")]
-#[inline(always)]
 pub fn registry_id_from_symbol(symbol_ptr: *const u8) -> u16 {
-    ((symbol_ptr as usize).wrapping_sub(binary_base() as usize)) as u16
+    (symbol_ptr as u16).wrapping_sub(binary_base())
 }
 
 /// Expose the current binary base (truncated to `u16`) used by `defmt` for ID rebasing.
