@@ -3,7 +3,7 @@ use proc_macro::TokenStream;
 use proc_macro_error2::abort;
 use quote::format_ident;
 use quote::quote;
-use syn::parse_macro_input;
+use syn::{parse_macro_input, parse_quote};
 
 use crate::{construct, function_like::log};
 
@@ -29,7 +29,13 @@ pub(crate) fn expand(args: TokenStream) -> TokenStream {
     );
 
     let var_name = format_ident!("S");
-    let var_item = construct::static_variable(&var_name, &format_string, "timestamp", None);
+    let var_item = construct::static_variable(
+        &var_name,
+        &format_string,
+        "timestamp",
+        None,
+        &parse_quote!(defmt),
+    );
 
     quote!(
         const _: () = {

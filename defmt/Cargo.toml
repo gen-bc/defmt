@@ -21,6 +21,7 @@ version = "1.0.1"
 alloc = []
 avoid-default-panic = []
 ip_in_core = []
+linkme-registry = ["dep:linkme", "defmt-macros/linkme-registry"]
 
 # Encoding feature flags. These should only be set by end-user crates, not by library crates.
 #
@@ -47,6 +48,7 @@ unstable-test = [ "defmt-macros/unstable-test" ]
 # defmt. Although, multiple versions of defmt might use the *same* defmt-macros.
 defmt-macros = { path = "../macros", version = "=1.0.1" }
 bitflags = "1"
+linkme = { version = "0.3", optional = true }
 
 [dev-dependencies]
 rustc_version = "0.4"

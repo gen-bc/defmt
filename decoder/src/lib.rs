@@ -34,6 +34,19 @@ pub use crate::{
     stream::StreamDecoder,
 };
 
+/// A defmt symbol record supplied by a runtime registry (instead of parsing an executable).
+///
+/// This is intended for host-side runtimes that already have access to the symbols in-memory.
+#[derive(Clone, Copy, Debug)]
+pub struct RegistryRecord<'a> {
+    /// The base-relative `u16` ID that the device/runtime emits on the wire.
+    pub index: u16,
+    /// The defmt symbol name (JSON) as used in `#[export_name = "..."]`.
+    pub raw_symbol: &'a str,
+    /// Address of the exported symbol in memory (used for bitflags values).
+    pub symbol_ptr: *const u8,
+}
+
 /// Specifies the origin of a format string
 #[derive(PartialEq, Eq, Debug)]
 pub enum Tag {
@@ -173,6 +186,14 @@ impl Table {
     /// CAUTION: This is meant for defmt/probe-run development only and can result in reading garbage data.
     pub fn parse_ignore_version(elf: &[u8]) -> Result<Option<Table>, anyhow::Error> {
         parse_impl(elf, false)
+    }
+
+    /// Builds a `defmt` table from a runtime registry (no ELF/Mach-O/DWARF parsing).
+    pub fn from_registry(
+        records: &[RegistryRecord<'_>],
+        encoding: Encoding,
+    ) -> Result<Table, anyhow::Error> {
+        elf2table::parse_registry(records, encoding)
     }
 
     pub fn set_timestamp_entry(&mut self, timestamp: TableEntry) {

@@ -45,7 +45,7 @@ pub(crate) fn interned_string(
     let var_addr = if cfg!(feature = "unstable-test") {
         quote!({ #defmt_path::export::fetch_add_string_index() })
     } else {
-        let var_item = static_variable(&var_name, string, tag, prefix);
+        let var_item = static_variable(&var_name, string, tag, prefix, defmt_path);
         quote!({
             #var_item
             &#var_name as *const u8 as u16
@@ -86,16 +86,39 @@ pub(crate) fn static_variable(
     data: &str,
     tag: &str,
     prefix: Option<&str>,
+    defmt_path: &syn::Path,
 ) -> TokenStream2 {
     let sym_name = mangled_symbol_name(tag, data);
     let section = linker_section(false, prefix, &sym_name);
     let section_for_macos = linker_section(true, prefix, &sym_name);
+
+    let registry = if cfg!(feature = "linkme-registry") {
+        let is_log_statement = name.to_string() == "DEFMT_LOG_STATEMENT";
+        let registry_name = format_ident!("__DEFMT_REGISTRY_ENTRY_{}", hash(&sym_name));
+        quote!(
+            #[used]
+            #[#defmt_path::export::distributed_slice(#defmt_path::export::DEFMT_REGISTRY)]
+            #[linkme(crate = #defmt_path::export::linkme)]
+            static #registry_name: #defmt_path::export::RegistryEntry = #defmt_path::export::RegistryEntry {
+                symbol_ptr: &#name as *const u8,
+                raw_symbol: #sym_name,
+                file: file!(),
+                line: line!(),
+                module: module_path!(),
+                is_log_statement: #is_log_statement,
+            };
+        )
+    } else {
+        quote!()
+    };
 
     quote!(
         #[cfg_attr(target_os = "macos", link_section = #section_for_macos)]
         #[cfg_attr(not(target_os = "macos"), link_section = #section)]
         #[export_name = #sym_name]
         static #name: u8 = 0;
+
+        #registry
     )
 }
 

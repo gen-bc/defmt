@@ -16,7 +16,7 @@ use std::{
 use anyhow::{anyhow, bail, ensure};
 use object::{Object, ObjectSection, ObjectSegment, ObjectSymbol};
 
-use crate::{BitflagsKey, StringEntry, Table, TableEntry, Tag, DEFMT_VERSIONS};
+use crate::{BitflagsKey, Encoding, RegistryRecord, StringEntry, Table, TableEntry, Tag, DEFMT_VERSIONS};
 
 pub fn parse_impl(elf: &[u8], check_version: bool) -> Result<Option<Table>, anyhow::Error> {
     let elf = object::File::parse(elf)?;
@@ -249,6 +249,96 @@ pub fn parse_impl(elf: &[u8], check_version: bool) -> Result<Option<Table>, anyh
         bitflags,
         encoding,
     }))
+}
+
+/// Build a `defmt` table from a runtime registry (no ELF/Mach-O parsing).
+///
+/// This is used by host-side runtimes that already have access to all defmt symbols in-memory.
+pub fn parse_registry(
+    records: &[RegistryRecord<'_>],
+    encoding: Encoding,
+) -> Result<Table, anyhow::Error> {
+    let mut map: BTreeMap<usize, TableEntry> = BTreeMap::new();
+    let mut timestamp: Option<TableEntry> = None;
+    let mut bitflags_map: HashMap<BitflagsKey, Vec<(String, u128, u128)>> = HashMap::new();
+
+    for record in records {
+        // `raw_symbol` comes from the proc-macro (JSON) and does not include platform prefixes.
+        let sym = symbol::Symbol::demangle(record.raw_symbol, false)?;
+
+        match sym.tag() {
+            symbol::SymbolTag::Defmt(Tag::Timestamp) => {
+                let entry = TableEntry::new(
+                    StringEntry::new(Tag::Timestamp, sym.data().to_string()),
+                    record.raw_symbol.to_string(),
+                );
+                if timestamp.replace(entry).is_some() {
+                    // Prefer to fail loudly: multiple timestamp formats are ambiguous.
+                    bail!("multiple defmt timestamp formats found in registry");
+                }
+            }
+            symbol::SymbolTag::Defmt(Tag::BitflagsValue) => {
+                // The exported symbol is a `static u128`. Read its value directly from memory.
+                let value = {
+                    #[expect(unsafe_code)]
+                    // SAFETY: The pointer refers to an exported static in the current binary.
+                    let bytes = unsafe { core::slice::from_raw_parts(record.symbol_ptr, 16) };
+                    u128::from_le_bytes(bytes.try_into().unwrap())
+                };
+
+                let segments = sym.data().split("::").collect::<Vec<_>>();
+                let (bitflags_name, value_idx, value_name) = match &*segments {
+                    [bitflags_name, value_idx, value_name] => {
+                        (*bitflags_name, value_idx.parse::<u128>()?, *value_name)
+                    }
+                    _ => bail!("malformed bitflags value string '{}'", sym.data()),
+                };
+
+                let key = BitflagsKey {
+                    ident: bitflags_name.into(),
+                    package: sym.package().into(),
+                    disambig: sym.disambiguator().into(),
+                    crate_name: sym.crate_name().map(|s| s.into()),
+                };
+
+                bitflags_map
+                    .entry(key)
+                    .or_insert_with(Vec::new)
+                    .push((value_name.into(), value_idx, value));
+            }
+            symbol::SymbolTag::Defmt(tag) => {
+                map.insert(
+                    record.index as usize,
+                    TableEntry::new(
+                        StringEntry::new(tag, sym.data().to_string()),
+                        record.raw_symbol.to_string(),
+                    ),
+                );
+            }
+            symbol::SymbolTag::Custom(_) => {}
+        }
+    }
+
+    // Sort bitflags values by the value's index in definition order.
+    let bitflags = bitflags_map
+        .into_iter()
+        .map(|(k, mut values)| {
+            values.sort_by_key(|(_, index, _)| *index);
+            let values = values
+                .into_iter()
+                .map(|(name, _index, value)| (name, value))
+                .collect();
+
+            (k, values)
+        })
+        .collect();
+
+    Ok(Table {
+        entries: map,
+        timestamp,
+        bitflags,
+        encoding,
+    })
 }
 
 /// Checks if the version encoded in the symbol table is compatible with this version of the `decoder` crate

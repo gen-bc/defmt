@@ -8,6 +8,46 @@ use crate::{Format, Formatter, Str};
 pub use self::integers::*;
 pub use bitflags::bitflags;
 
+// Re-export the attribute macro so downstream crates do NOT need a direct dependency on `linkme`.
+#[cfg(feature = "linkme-registry")]
+pub use linkme::distributed_slice;
+/// Re-export the runtime crate path so `distributed_slice` can be configured to not rely on
+/// `::linkme` being a direct dependency of downstream crates.
+#[cfg(feature = "linkme-registry")]
+pub use linkme as linkme;
+
+/// A runtime-accessible registry entry describing a `defmt` symbol.
+///
+/// This is used on host targets to avoid parsing the executable (ELF/Mach-O + DWARF) at runtime.
+#[cfg(feature = "linkme-registry")]
+#[derive(Clone, Copy)]
+#[repr(C)]
+pub struct RegistryEntry {
+    /// Address of the exported `static` for this defmt symbol.
+    pub symbol_ptr: *const u8,
+    /// The mangled symbol name (JSON) used as `#[export_name]`.
+    pub raw_symbol: &'static str,
+    /// Call-site file path (best-effort; meaningful for log statements).
+    pub file: &'static str,
+    /// Call-site line number (best-effort; meaningful for log statements).
+    pub line: u32,
+    /// Call-site module path (best-effort; meaningful for log statements).
+    pub module: &'static str,
+    /// True if this symbol was emitted for a log statement (e.g. `info!`, `warn!`, etc.).
+    pub is_log_statement: bool,
+}
+
+// SAFETY: Registry entries only contain pointers to `'static` data and string literals.
+#[cfg(feature = "linkme-registry")]
+unsafe impl Sync for RegistryEntry {}
+
+/// A distributed slice containing all defmt symbols in the final binary.
+///
+/// Populated by the defmt proc-macros (when `linkme-registry` is enabled).
+#[cfg(feature = "linkme-registry")]
+#[distributed_slice]
+pub static DEFMT_REGISTRY: [RegistryEntry] = [..];
+
 pub trait UnsignedInt {}
 impl UnsignedInt for u8 {}
 impl UnsignedInt for u16 {}
@@ -145,6 +185,22 @@ pub fn make_istr(address: u16) -> Str {
     Str {
         address: address.wrapping_sub(binary_base()),
     }
+}
+
+/// Computes the base-relative `u16` ID used on the wire for a given defmt symbol.
+///
+/// This mirrors how `defmt` derives IDs from symbol addresses (truncate to `u16` then rebase).
+#[cfg(feature = "linkme-registry")]
+#[inline(always)]
+pub fn registry_id_from_symbol(symbol_ptr: *const u8) -> u16 {
+    (symbol_ptr as usize as u16).wrapping_sub(binary_base())
+}
+
+/// Expose the current binary base (truncated to `u16`) used by `defmt` for ID rebasing.
+#[cfg(feature = "linkme-registry")]
+#[inline(always)]
+pub fn registry_binary_base_u16() -> u16 {
+    binary_base()
 }
 
 /// Create a Formatter.

@@ -15,6 +15,7 @@ proc-macro = true
 [features]
 # WARNING: for internal use only, not covered by semver guarantees
 unstable-test = []
+linkme-registry = []
 
 [dependencies]
 defmt-parser = { version = "=1.0.0", path = "../parser" }
