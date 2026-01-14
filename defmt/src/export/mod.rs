@@ -193,7 +193,7 @@ pub fn make_istr(address: u16) -> Str {
 #[cfg(feature = "linkme-registry")]
 #[inline(always)]
 pub fn registry_id_from_symbol(symbol_ptr: *const u8) -> u16 {
-    (symbol_ptr as usize as u16).wrapping_sub(binary_base())
+    ((symbol_ptr as usize).wrapping_sub(binary_base() as usize)) as u16
 }
 
 /// Expose the current binary base (truncated to `u16`) used by `defmt` for ID rebasing.
