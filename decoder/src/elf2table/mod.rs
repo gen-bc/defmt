@@ -101,9 +101,16 @@ pub fn parse_impl(elf: &[u8], check_version: bool) -> Result<Option<Table>, anyh
             }
         }
     } else {
-        let defmt_section = elf.section_by_name(".defmt");
-        if let Some(defmt_section) = defmt_section {
-            defmt_sections.insert(defmt_section.index(), defmt_section);
+        // UNIFIED APPROACH: Find all sections starting with ".defmt"
+        // This supports both:
+        // - Old binaries with linker script (single merged ".defmt" section)
+        // - New binaries without linker script (multiple ".defmt.{severity}" sections)
+        for section in elf.sections() {
+            if let Ok(name) = section.name() {
+                if name == ".defmt" || name.starts_with(".defmt.") {
+                    defmt_sections.insert(section.index(), section);
+                }
+            }
         }
     }
 
