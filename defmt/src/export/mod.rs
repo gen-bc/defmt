@@ -177,9 +177,9 @@ pub fn panic() -> ! {
 #[inline(always)]
 pub fn panic() -> ! {
     extern "Rust" {
-        fn defmt_panic() -> !;
+        fn _defmt_panic() -> !;
     }
-    unsafe { defmt_panic() }
+    unsafe { _defmt_panic() }
 }
 
 /// Implementation detail
