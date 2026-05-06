@@ -101,11 +101,28 @@ pub(crate) fn static_variable(
     let section = linker_section(false, prefix, &sym_name);
     let section_for_macos = linker_section(true, prefix, &sym_name);
 
+    // macOS only: emit a sibling marker static `DEFMT_LOC_MARKER_{hash}` whose
+    // ident encodes a hash of `sym_name`. The decoder uses the hash (parsed
+    // from the marker's DWARF `DW_AT_name`) to map each DEFMT_LOG_STATEMENT
+    // DWARF DIE back to its Symbol-Table entry. This is the workaround for
+    // Apple's linker stripping addresses from unreferenced `#[no_mangle]`
+    // statics, which would otherwise break the address-based DWARF→symtab
+    // correlation. `#[used]` keeps the marker referenced so it isn't GC'd.
+    let hash_val = hash(&sym_name);
+    let loc_sym_name = format!("__defmt_loc_{hash_val:x}");
+    let loc_ident = format_ident!("DEFMT_LOC_MARKER_{:x}", hash_val);
+
     quote!(
         #[cfg_attr(target_os = "macos", link_section = #section_for_macos)]
         #[cfg_attr(not(target_os = "macos"), link_section = #section)]
         #[export_name = #sym_name]
         static #name: u8 = 0;
+
+        #[cfg(target_os = "macos")]
+        #[link_section = "__DATA,__defmt_loc"]
+        #[used]
+        #[export_name = #loc_sym_name]
+        static #loc_ident: u8 = 0;
     )
 }
 

@@ -292,6 +292,7 @@ pub type Locations = BTreeMap<u64, Location>;
 
 pub fn get_locations(elf: &[u8], table: &Table) -> Result<Locations, anyhow::Error> {
     let object = object::File::parse(elf)?;
+    let is_mac = object.format() == object::BinaryFormat::MachO;
     let endian = if object.is_little_endian() {
         gimli::RunTimeEndian::Little
     } else {
@@ -319,6 +320,42 @@ pub fn get_locations(elf: &[u8], table: &Table) -> Result<Locations, anyhow::Err
     let dwarf = dwarf_sections.borrow_with_sup(&dwarf_sup_sections, &borrow_section);
 
     let mut units = dwarf.debug_info.units();
+
+    // On macOS, Apple's linker strips addresses from unreferenced `#[no_mangle]`
+    // statics, so the standard ELF correlation (DWARF `DW_AT_location` →
+    // address → symbol-table entry) collapses every defmt log to address 0.
+    // The macros emit a sibling `DEFMT_LOC_MARKER_{hash}` static (see
+    // `macros::construct::static_variable`); here we precompute the same hash
+    // over each entry's `raw_symbol` and keep a side-table from hash to the
+    // entry's index in `table.entries`. In the DWARF walk below, we look at
+    // each marker DIE's `DW_AT_name`, parse the hash, and resolve directly.
+    let hash_to_index: BTreeMap<u64, u64> = if is_mac {
+        use std::hash::{Hash, Hasher};
+        let mut m = BTreeMap::new();
+        for (idx, entry) in table.entries.iter() {
+            // Mach-O exports carry a leading underscore that the symbol table
+            // preserves; strip it so the hash matches the macro side which
+            // hashes the un-prefixed `sym_name`.
+            let symbol = entry
+                .raw_symbol
+                .strip_prefix('_')
+                .unwrap_or(&entry.raw_symbol);
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            symbol.hash(&mut hasher);
+            let hash = hasher.finish();
+            if let Some(prev) = m.insert(hash, *idx as u64) {
+                bail!(
+                    "BUG: DEFMT_LOC_MARKER hash collision between entries (hash 0x{:016x}, prev_idx={}, new_idx={})",
+                    hash,
+                    prev,
+                    *idx as u64,
+                );
+            }
+        }
+        m
+    } else {
+        BTreeMap::new()
+    };
 
     let mut map = BTreeMap::new();
     while let Some(header) = units.next()? {
@@ -391,7 +428,39 @@ pub fn get_locations(elf: &[u8], table: &Table) -> Result<Locations, anyhow::Err
                     }
                 }
 
-                if let (
+                if is_mac {
+                    // macOS: bypass addresses entirely. Each defmt log emits
+                    // a sibling `DEFMT_LOC_MARKER_{hash}` static; we parse
+                    // the hash out of the marker DIE's `DW_AT_name` and use
+                    // `hash_to_index` (built above from the symbol table) to
+                    // recover the table key. `linkage_name` and `location`
+                    // are intentionally not required here — the marker DIE
+                    // may have either, but we don't need them.
+                    if let (Some(name_index), Some(file_index), Some(line)) =
+                        (name, decl_file, decl_line)
+                    {
+                        let name_slice = dwarf.string(name_index)?;
+                        let name = core::str::from_utf8(&name_slice)?;
+                        if let Some(hash_str) = name.strip_prefix("DEFMT_LOC_MARKER_") {
+                            if let Ok(hash) = u64::from_str_radix(hash_str, 16) {
+                                if let Some(&index) = hash_to_index.get(&hash) {
+                                    let file = file_index_to_path(file_index, &unit, &dwarf)?;
+                                    let module = segments.join("::");
+                                    let loc = Location { file, line, module };
+                                    if let Some(old) = map.insert(index, loc.clone()) {
+                                        bail!(
+                                            "BUG in DWARF variable filter: hash collision for index {} (old = {:?}, new = {:?}, hash = 0x{:016x})",
+                                            index,
+                                            old,
+                                            loc,
+                                            hash,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if let (
                     Some(name_index),
                     Some(linkage_name_index),
                     Some(file_index),
