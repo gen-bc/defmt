@@ -239,9 +239,39 @@ async fn run(opts: Opts, source: &mut Source) -> anyhow::Result<()> {
     } = opts;
 
     // read and parse elf file
-    let bytes = fs::read(elf.unwrap()).await?;
+    let elf_path = elf.unwrap();
+    let bytes = fs::read(&elf_path).await?;
     let table = Table::parse(&bytes)?.ok_or_else(|| anyhow!(".defmt data not found"))?;
-    let locs = table.get_locations(&bytes)?;
+
+    // On macOS with `split-debuginfo = "packed"`, DWARF lives in a sibling
+    // `.dSYM` bundle rather than embedded in the Mach-O. On other platforms
+    // DWARF is in the main file, so we feed `bytes` straight to `get_locations`.
+    #[cfg(not(target_os = "macos"))]
+    let dwarf_bytes = bytes.clone();
+
+    #[cfg(target_os = "macos")]
+    let dwarf_bytes = {
+        let mut dwarf_bytes = bytes.clone();
+        let dsym_bundle = format!("{}.dSYM", elf_path.display());
+        let dwarf_dir = std::path::Path::new(&dsym_bundle).join("Contents/Resources/DWARF");
+        // First file under the bundle's DWARF/ dir is the dwarf payload.
+        if let Ok(mut entries) = std::fs::read_dir(&dwarf_dir) {
+            if let Some(Ok(entry)) = entries.next() {
+                if let Ok(bundle_bytes) = fs::read(entry.path()).await {
+                    dwarf_bytes = bundle_bytes;
+                } else {
+                    log::warn!("Failed to read DWARF from dSYM bundle at {:?}", entry.path());
+                }
+            } else {
+                log::debug!("No DWARF file found in dSYM bundle at {:?}", dwarf_dir);
+            }
+        } else {
+            log::debug!("No dSYM bundle found at {:?}, using embedded DWARF", dwarf_dir);
+        }
+        dwarf_bytes
+    };
+
+    let locs = table.get_locations(&dwarf_bytes)?;
 
     // Give the _SEGGER_RTT address to the source.
     source.set_rtt_addr(&bytes).await?;
