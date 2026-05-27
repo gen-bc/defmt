@@ -255,12 +255,18 @@ async fn run(opts: Opts, source: &mut Source) -> anyhow::Result<()> {
         let dsym_bundle = format!("{}.dSYM", elf_path.display());
         let dwarf_dir = std::path::Path::new(&dsym_bundle).join("Contents/Resources/DWARF");
         // First file under the bundle's DWARF/ dir is the dwarf payload.
-        if let Ok(mut entries) = std::fs::read_dir(dwarf_dir) {
+        if let Ok(mut entries) = std::fs::read_dir(&dwarf_dir) {
             if let Some(Ok(entry)) = entries.next() {
                 if let Ok(bundle_bytes) = fs::read(entry.path()).await {
                     dwarf_bytes = bundle_bytes;
+                } else {
+                    log::warn!("Failed to read DWARF from dSYM bundle at {:?}", entry.path());
                 }
+            } else {
+                log::debug!("No DWARF file found in dSYM bundle at {:?}", dwarf_dir);
             }
+        } else {
+            log::debug!("No dSYM bundle found at {:?}, using embedded DWARF", dwarf_dir);
         }
         dwarf_bytes
     };
