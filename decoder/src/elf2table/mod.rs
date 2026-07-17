@@ -20,9 +20,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{BitflagsKey, StringEntry, Table, TableEntry, Tag, DEFMT_VERSIONS};
 
-pub fn parse_impl(elf: &[u8], check_version: bool) -> Result<Option<Table>, anyhow::Error> {
-    let elf = object::File::parse(elf)?;
-    let is_mac = elf.format() == object::BinaryFormat::MachO;
+pub fn parse_impl(executable: &[u8], check_version: bool) -> Result<Option<Table>, anyhow::Error> {
+    let executable = object::File::parse(executable)?;
+    let is_mac = executable.format() == object::BinaryFormat::MachO;
     // first pass to extract the `_defmt_version`
     let mut version = None;
     let mut encoding = None;
@@ -54,7 +54,7 @@ pub fn parse_impl(elf: &[u8], check_version: bool) -> Result<Option<Table>, anyh
             .map(ToString::to_string)
     };
 
-    for entry in elf.symbols() {
+    for entry in executable.symbols() {
         let name = match entry.name() {
             Ok(name) => name,
             Err(_) => continue,
@@ -87,11 +87,11 @@ pub fn parse_impl(elf: &[u8], check_version: bool) -> Result<Option<Table>, anyh
 
     let mut defmt_sections = HashMap::new();
     if is_mac {
-        let defmt_segment = elf
+        let defmt_segment = executable
             .segments()
             .find(|segment| ObjectSegment::name(segment) == Ok(Some(".defmt")));
         if let Some(defmt_segment) = defmt_segment {
-            for section in elf.sections() {
+            for section in executable.sections() {
                 // check if the section is in the segment by comparing the section's address
                 // with the segment's address and size
                 if section.address() >= defmt_segment.address()
@@ -102,9 +102,16 @@ pub fn parse_impl(elf: &[u8], check_version: bool) -> Result<Option<Table>, anyh
             }
         }
     } else {
-        let defmt_section = elf.section_by_name(".defmt");
-        if let Some(defmt_section) = defmt_section {
-            defmt_sections.insert(defmt_section.index(), defmt_section);
+        // The `defmt.x` linker script collects all `.defmt.*` input sections into a single
+        // output section named `.defmt`. Host builds (e.g. Linux) are linked without the
+        // linker script, so every symbol keeps its own `.defmt.<tag>.<symbol>` section.
+        // Accept both layouts.
+        for section in executable.sections() {
+            if let Ok(name) = section.name() {
+                if name == ".defmt" || name.starts_with(".defmt.") {
+                    defmt_sections.insert(section.index(), section);
+                }
+            }
         }
     }
 
@@ -137,7 +144,7 @@ pub fn parse_impl(elf: &[u8], check_version: bool) -> Result<Option<Table>, anyh
     let mut map = BTreeMap::new();
     let mut bitflags_map = HashMap::new();
     let mut timestamp = None;
-    for entry in elf.symbols() {
+    for entry in executable.symbols() {
         let Ok(name) = entry.name() else {
             continue;
         };
@@ -267,7 +274,7 @@ fn check_version(version: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Location of a defmt log statement in the elf-file
+/// Location of a defmt log statement in the executable
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Location {
     pub file: PathBuf,
@@ -284,8 +291,8 @@ impl fmt::Debug for Location {
 /// Mapping of memory address to [`Location`]
 pub type Locations = BTreeMap<u64, Location>;
 
-pub fn get_locations(elf: &[u8], table: &Table) -> Result<Locations, anyhow::Error> {
-    let object = object::File::parse(elf)?;
+pub fn get_locations(executable: &[u8], table: &Table) -> Result<Locations, anyhow::Error> {
+    let object = object::File::parse(executable)?;
     let is_mac = object.format() == object::BinaryFormat::MachO;
     let endian = if object.is_little_endian() {
         gimli::RunTimeEndian::Little
@@ -426,7 +433,11 @@ pub fn get_locations(elf: &[u8], table: &Table) -> Result<Locations, anyhow::Err
                         if name_str == "DEFMT_LOG_STATEMENT"
                             && table.raw_symbols().any(|i| i == linkage_name_str)
                         {
-                            let addr = exprloc2address(unit.encoding(), &loc)?;
+                            // Truncate the address to 16 bits, mirroring how `parse_impl`
+                            // computes table indices. On embedded targets the `.defmt`
+                            // section starts at address 1 so this is a no-op; host builds
+                            // place the defmt statics at arbitrary addresses.
+                            let addr = u64::from(exprloc2address(unit.encoding(), &loc)? as u16);
                             let file = file_index_to_path(file_index, &unit, &dwarf)?;
                             let module = segments.join("::");
                             let loc_data = Location { file, line, module };
