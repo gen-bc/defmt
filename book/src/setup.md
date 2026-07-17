@@ -16,6 +16,10 @@ To use `defmt` in an **application** you need the additional steps documented be
 
 ### Linker script
 
+> 💡 This step only applies to *embedded* applications. Applications running on a host
+> OS (Linux, macOS) don't need the linker script — see
+> [Running on the host](./host.md).
+
 The application must be linked using a custom linking process that includes the `defmt.x` linker script.
 Custom linking is usual for embedded applications and configured in the `.cargo/config` file.
 
@@ -49,10 +53,12 @@ The following `global_logger`s are provided as part of the project:
 - [`defmt-rtt`], logs over RTT. Note that this crate can *not* be used together with `rtt-target`.
 - [`defmt-itm`], logs over ITM (Instrumentation Trace Macrocell) stimulus port 0.
 - [`defmt-semihosting`], logs over semihosting. Meant only for testing `defmt` on a virtual Cortex-M device (QEMU).
+- [`defmt-stdout`], logs to stdout (or a file). For programs and unit tests running on a host OS — see [Running on the host](./host.md).
 
 [`defmt-rtt`]: https://docs.rs/defmt-rtt/
 [`defmt-itm`]: https://docs.rs/defmt-itm/
 [`defmt-semihosting`]: https://github.com/knurling-rs/defmt/tree/6cfd947384debb18a4df761cbe454f8d86cf3441/firmware/defmt-semihosting
+[`defmt-stdout`]: https://github.com/knurling-rs/defmt/tree/main/stdout
 
 Information about how to write a `global_logger` can be found in the [`#[global_logger]` section](./global-logger.md).
 

@@ -15,6 +15,7 @@
   - [#[global_logger]](./global-logger.md)
   - [panic! and assert!](./panic.md)
   - [Printers](./printers.md)
+  - [Running on the host (Linux / macOS)](./host.md)
   - [Encoding](./encoding.md)
   - [Customizing log output](./custom-log-output.md)
   - [JSON output](./json-output.md)
