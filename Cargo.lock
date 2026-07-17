@@ -254,6 +254,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
+name = "critical-section"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
+
+[[package]]
 name = "data-encoding"
 version = "2.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -355,6 +361,14 @@ dependencies = [
  "object",
  "tokio",
  "tokio-serial",
+]
+
+[[package]]
+name = "defmt-stdout"
+version = "0.1.0"
+dependencies = [
+ "critical-section",
+ "defmt",
 ]
 
 [[package]]
