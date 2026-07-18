@@ -20,7 +20,6 @@ We have several packages which live in this repository. Changes are tracked sepa
 * [defmt-rtt](#defmt-rtt)
 * [defmt-itm](#defmt-itm)
 * [defmt-semihosting](#defmt-semihosting)
-* [defmt-stdout](#defmt-stdout)
 * [panic-probe](#panic-probe)
 * [defmt-test](#defmt-test)
 * [defmt-test-macros](#defmt-test-macros)
@@ -847,14 +846,6 @@ Initial release
 ### [defmt-semihosting-v0.1.0] (2024-11-27)
 
 Initial release
-
-## defmt-stdout
-
-> Transmit defmt log messages to stdout or a file on operating systems with `std` support
-
-### defmt-stdout-next
-
-* Initial release: `defmt` global logger for programs and unit tests running on a host OS (Linux, macOS). Writes to stdout, or to the file named by the `DEFMT_STDOUT_FILE` environment variable.
 
 ## panic-probe
 

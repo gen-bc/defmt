@@ -8,7 +8,6 @@ members = [
   "parser",
   "print",
   "qemu-run",
-  "stdout",
   "xtask",
 ]
 resolver = "2"

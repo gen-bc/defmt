@@ -18,7 +18,7 @@ To use `defmt` in an **application** you need the additional steps documented be
 
 > 💡 This step only applies to *embedded* applications. Applications running on a host
 > OS (Linux, macOS) don't need the linker script — see
-> [Running on the host](./host.md).
+> [Running on a host](#running-on-a-host-linux--macos) below.
 
 The application must be linked using a custom linking process that includes the `defmt.x` linker script.
 Custom linking is usual for embedded applications and configured in the `.cargo/config` file.
@@ -53,12 +53,10 @@ The following `global_logger`s are provided as part of the project:
 - [`defmt-rtt`], logs over RTT. Note that this crate can *not* be used together with `rtt-target`.
 - [`defmt-itm`], logs over ITM (Instrumentation Trace Macrocell) stimulus port 0.
 - [`defmt-semihosting`], logs over semihosting. Meant only for testing `defmt` on a virtual Cortex-M device (QEMU).
-- [`defmt-stdout`], logs to stdout (or a file). For programs and unit tests running on a host OS — see [Running on the host](./host.md).
 
 [`defmt-rtt`]: https://docs.rs/defmt-rtt/
 [`defmt-itm`]: https://docs.rs/defmt-itm/
 [`defmt-semihosting`]: https://github.com/knurling-rs/defmt/tree/6cfd947384debb18a4df761cbe454f8d86cf3441/firmware/defmt-semihosting
-[`defmt-stdout`]: https://github.com/knurling-rs/defmt/tree/main/stdout
 
 Information about how to write a `global_logger` can be found in the [`#[global_logger]` section](./global-logger.md).
 
@@ -70,3 +68,166 @@ To learn how to enable other logging levels and filters logs per modules read th
 ### Memory use
 
 When in a tight memory situation and logging over RTT, the buffer size (default: 1024 bytes) can be configured with the `DEFMT_RTT_BUFFER_SIZE` environment variable. Use a power of 2 for best performance.
+
+## Running on a host (Linux / macOS)
+
+`defmt` primarily targets embedded devices, but programs that use it — including your
+crate's **unit tests** — can also be compiled for and run on a host operating system.
+Both Linux (ELF) and macOS (Mach-O) executables are supported.
+
+Host builds do *not* use the `defmt.x` linker script, so the
+[linker script setup](#linker-script) above does not apply; only a `global_logger` is
+needed. The logger below writes the binary defmt wire data to stdout, or to a file if
+the `DEFMT_LOG_FILE` environment variable is set. It also provides the
+`_defmt_timestamp` and `_defmt_panic` symbols, whose fallback implementations normally
+come from the linker script:
+
+``` rust,ignore
+//! A `defmt` global logger for host builds: writes the defmt wire data to
+//! stdout, or to the file named by the `DEFMT_LOG_FILE` environment variable.
+
+use std::{
+    cell::UnsafeCell,
+    fs::File,
+    io::Write,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        OnceLock,
+    },
+};
+
+#[defmt::global_logger]
+struct Logger;
+
+/// Is `true` while a thread holds the logger.
+static TAKEN: AtomicBool = AtomicBool::new(false);
+/// Frames the log bytes. Only accessed while `TAKEN` is held.
+static ENCODER: SyncCell<defmt::Encoder> = SyncCell(UnsafeCell::new(defmt::Encoder::new()));
+
+struct SyncCell<T>(UnsafeCell<T>);
+unsafe impl<T> Sync for SyncCell<T> {}
+
+unsafe impl defmt::Logger for Logger {
+    fn acquire() {
+        // spin until we own the logger; defmt itself never nests `acquire`
+        // on a single thread
+        while TAKEN.swap(true, Ordering::Acquire) {
+            std::thread::yield_now();
+        }
+        // safety: accessing the cell is OK because we hold the lock
+        unsafe { (*ENCODER.0.get()).start_frame(write_all) }
+    }
+
+    unsafe fn write(bytes: &[u8]) {
+        // safety: accessing the cell is OK because we hold the lock
+        unsafe { (*ENCODER.0.get()).write(bytes, write_all) }
+    }
+
+    unsafe fn flush() {
+        let _ = std::io::stdout().flush();
+    }
+
+    unsafe fn release() {
+        // safety: accessing the cell is OK because we hold the lock
+        unsafe { (*ENCODER.0.get()).end_frame(write_all) }
+        // flush at the end of each frame so that `defmt-print` on the other
+        // side of a pipe sees complete frames promptly
+        let _ = std::io::stdout().flush();
+        TAKEN.store(false, Ordering::Release);
+    }
+}
+
+/// Write to stdout, or to the file named by `DEFMT_LOG_FILE` if set.
+fn write_all(bytes: &[u8]) {
+    static SINK: OnceLock<Option<File>> = OnceLock::new();
+    let sink = SINK.get_or_init(|| {
+        std::env::var_os("DEFMT_LOG_FILE")
+            .map(|path| File::create(path).expect("failed to create DEFMT_LOG_FILE"))
+    });
+    // logging must not panic, so I/O errors are discarded
+    let _ = match sink.as_ref() {
+        Some(mut file) => file.write_all(bytes),
+        None => std::io::stdout().write_all(bytes),
+    };
+}
+
+// The `defmt.x` linker script provides fallback implementations of the
+// `_defmt_timestamp` and `_defmt_panic` symbols; host builds are linked
+// without it, so we provide our own.
+
+/// An empty timestamp. Define a `defmt::timestamp!` instead if you want one.
+#[export_name = "_defmt_timestamp"]
+fn defmt_timestamp(_: defmt::Formatter<'_>) {}
+
+/// Forward `defmt::panic!` and friends to `core::panic!`. Define a
+/// `#[defmt::panic_handler]` instead to customize this.
+#[export_name = "_defmt_panic"]
+fn defmt_panic() -> ! {
+    panic!("panicked via defmt")
+}
+```
+
+Pipe the program's output through [`defmt-print`] to view the logs:
+
+[`defmt-print`]: https://crates.io/crates/defmt-print
+
+```console
+$ DEFMT_LOG=info cargo run | defmt-print -e target/debug/my-app
+Hello, x = 42
+```
+
+> 💡 Remember that log levels are selected at *compile time* with the `DEFMT_LOG`
+> environment variable (see [Filtering](./filtering.md)). By default only ERROR level
+> statements are compiled in.
+
+### Running unit tests
+
+Unit tests work the same way, with one caveat: `cargo test`'s own output ("running 1
+test ...") goes to stdout too and would corrupt the binary defmt stream. Use
+`DEFMT_LOG_FILE` (handled by the logger above) to send the defmt data to a file
+instead:
+
+```console
+$ DEFMT_LOG=info DEFMT_LOG_FILE=defmt.bin cargo test
+   Compiling my-app v0.1.0
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.5s
+     Running unittests src/main.rs (target/debug/deps/my_app-8759a844630659af)
+
+running 1 test
+test tests::logging_from_a_unit_test ... ok
+```
+
+Then decode the file, passing the *test binary* (the path is printed by `cargo test` on
+the `Running` line) to `defmt-print`:
+
+```console
+$ defmt-print -e target/debug/deps/my_app-8759a844630659af < defmt.bin
+INFO  hello from a unit test: 42
+```
+
+### Source location information on macOS (the dSYM trick)
+
+`defmt-print` reads DWARF debug info to display file/line/module information (shown
+with `--verbose`). On Linux the DWARF is embedded in the executable itself, so this
+works out of the box.
+
+On macOS, however, DWARF stays in the object files and is only collected into a
+separate `.dSYM` bundle by the `dsymutil` tool. `defmt-print` looks for that bundle
+next to the executable (e.g. `target/debug/my-app.dSYM`). To make Cargo generate it,
+set [`split-debuginfo`] to `"packed"` in your profile:
+
+```toml
+# Cargo.toml
+[profile.dev]
+split-debuginfo = "packed"
+```
+
+Alternatively, run `dsymutil target/debug/my-app` by hand after building. This also
+applies to test binaries: with `split-debuginfo = "packed"` Cargo places a `.dSYM`
+bundle next to each test binary in `target/debug/deps/`.
+
+> ⚠️ Only do this for macOS builds. On Linux, `split-debuginfo = "packed"` *removes*
+> the DWARF from the executable (moving it into separate files that `defmt-print`
+> doesn't read), so location information would be lost.
+
+[`split-debuginfo`]: https://doc.rust-lang.org/cargo/reference/profiles.html#split-debuginfo
