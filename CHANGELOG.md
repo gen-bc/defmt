@@ -592,6 +592,7 @@ Initial release
 
 ### [defmt-decoder-next]
 
+* [#1079] Avoid cloning `Arg`s when formatting format sequences
 * [#990] improve version mismatch error message, don't mention probe-run.
 * [#958] Update to object 0.36
 * [#986] Bump MSRV to 1.81
@@ -957,6 +958,7 @@ Initial release
 
 ---
 
+[#1079]: https://github.com/knurling-rs/defmt/pull/1079
 [#990]: https://github.com/knurling-rs/defmt/pull/990
 [#986]: https://github.com/knurling-rs/defmt/pull/986
 [#974]: https://github.com/knurling-rs/defmt/pull/974
