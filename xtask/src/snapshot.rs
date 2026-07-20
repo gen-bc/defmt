@@ -29,6 +29,7 @@ pub(crate) fn all_snapshot_tests() -> Vec<&'static str> {
         "hints_inner",
         "dbg",
         "panic_info",
+        "named_args",
     ];
     const NIGHTLY_SNAPSHOT_TESTS: &[&str] = &["alloc"];
     const POST_MSRV_SNAPSHOT_TESTS: &[&str] = &["net"];

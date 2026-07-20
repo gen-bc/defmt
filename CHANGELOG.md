@@ -52,6 +52,7 @@ We have several packages which live in this repository. Changes are tracked sepa
 
 ### [defmt-next]
 
+* Support named arguments in format strings, like `core::format_args!`: `{owner}`, `{owner:?}` and `{owner=u8:#x}` capture `owner` from the surrounding scope, and arguments can be passed by name (`defmt::info!("{x}", x = expr)`).
 * [#974] Ensure typechecking is still performed on disabled log statement.
 * [#960] Fix `Format` not accepting multiple helper attribute instances
 * [#937] add support for `#[defmt(transparent)]` on `Format` derive
@@ -429,6 +430,7 @@ Initial release
 
 ### [defmt-macros-next]
 
+* Support named arguments with inline capture (`{owner:?}`) and explicit `name = expr` formatting arguments.
 * [#956]: Link LICENSE-* in the crate folder
 
 ### [defmt-macros-v1.0.1] (2025-04-01)
@@ -667,6 +669,7 @@ Initial release
 
 ### [defmt-parser-next]
 
+* Support named arguments (`{owner}`, `{owner=u8:#x}`) in the format string grammar. Named parameters are assigned the argument indices after all positional ones, in order of first appearance. `Parameter` gained a `name` field (breaking change).
 * [#956] Link `LICENSE-*` in the crate folder
 * [#986] Bump MSRV to 1.81
 
